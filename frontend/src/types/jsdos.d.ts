@@ -21,10 +21,19 @@ export interface InitFileEntry {
 export type InitFsEntry = InitBundleEntry | InitFileEntry;
 export type InitFs = InitFsEntry | InitFsEntry[];
 
+export interface JsDosFsChanges {
+  local?: boolean;
+  urlToKey?: (url: string) => Promise<string>;
+  pull?: (key: string) => Promise<Uint8Array | null>;
+  push?: (key: string, data: Uint8Array) => Promise<void>;
+  delete?: (key: string) => Promise<void>;
+}
+
 export interface JsDosOptions {
   url: string;
   dosboxConf?: string;
   initFs?: InitFs;
+  fsChanges?: JsDosFsChanges;
   theme?:
     | "light"
     | "dark"

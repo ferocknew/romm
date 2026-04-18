@@ -94,7 +94,7 @@ function onPlay() {
     }
 
     // Download persist data from server if a state is selected
-    let initFsData: Uint8Array | undefined;
+    let persistData: Uint8Array | null = null;
     if (selectedState.value) {
       try {
         const { data } = await stateApi.get(
@@ -102,18 +102,28 @@ function onPlay() {
           { responseType: "arraybuffer" },
         );
         if (data) {
-          initFsData = new Uint8Array(data);
+          persistData = new Uint8Array(data);
         }
       } catch (e) {
         console.error("Failed to download js-dos state:", e);
       }
     }
 
+    // Use fsChanges.pull to provide server-side persist data as bundleChanges.
+    // js-dos restores state via changesProducer → changesFromUrl → fsChanges.pull,
+    // which loads it as bundles[1] (the changes layer), not initFs (bundles[2+]).
+    const fsChanges = persistData
+      ? {
+          pull: async (_key: string) => persistData,
+          local: false,
+        }
+      : undefined;
+
     const props = window.Dos(container as HTMLDivElement, {
       url: getDownloadPath({ rom: rom.value }),
       autoStart: true,
       ...(dosboxConf ? { dosboxConf } : {}),
-      ...(initFsData ? { initFs: initFsData } : {}),
+      ...(fsChanges ? { fsChanges } : {}),
       onEvent: (event: string, ci: JsDosCI) => {
         if (event === "ci-ready") {
           dosCI.value = ci;
