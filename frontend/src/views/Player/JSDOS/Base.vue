@@ -24,6 +24,7 @@ const dosCI = ref<JsDosCI | null>(null);
 const dosProps = ref<DosProps | null>(null);
 const selectedState = ref<StateSchema | null>(null);
 const saving = ref(false);
+const jsDosStates = ref<StateSchema[]>([]);
 
 async function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -147,22 +148,34 @@ function onFullScreenChange() {
   fullScreenOnPlay.value = !fullScreenOnPlay.value;
 }
 
-async function saveAndQuit() {
-  if (!dosCI.value || !rom.value) return;
+async function saveState() {
+  if (!dosCI.value || !rom.value) return null;
   saving.value = true;
   try {
     const persistData = await dosCI.value.persist();
     if (persistData && persistData.length > 0) {
-      await saveJsDosState({ rom: rom.value, stateFile: persistData });
-      romsStore.update(rom.value);
+      const saved = await saveJsDosState({
+        rom: rom.value,
+        stateFile: persistData,
+      });
+      if (saved) {
+        jsDosStates.value.unshift(saved);
+        selectedState.value = saved;
+        romsStore.update(rom.value);
+      }
+      return saved;
     }
   } catch (e) {
     console.error("Failed to save js-dos state:", e);
+  } finally {
+    saving.value = false;
   }
-  saving.value = false;
-  await dosCI.value.exit();
-  dosCI.value = null;
-  window.history.back();
+  return null;
+}
+
+async function saveAndQuit() {
+  await saveState();
+  await onlyQuit();
 }
 
 async function onlyQuit() {
@@ -183,11 +196,11 @@ onMounted(async () => {
     document.title = `${rom.value.name} | Play`;
 
     // Auto-select the latest js-dos state
-    const jsDosStates = rom.value.user_states.filter(
+    jsDosStates.value = rom.value.user_states.filter(
       (s) => s.emulator === "js-dos",
     );
-    if (jsDosStates.length > 0) {
-      selectedState.value = jsDosStates[0];
+    if (jsDosStates.value.length > 0) {
+      selectedState.value = jsDosStates.value[0];
     }
   }
 
@@ -270,21 +283,48 @@ onMounted(async () => {
             </v-col>
           </v-row>
 
-          <!-- State info when not running -->
-          <div v-if="!gameRunning && selectedState" class="mt-4">
-            <v-card variant="tonal" color="primary" rounded="lg">
-              <v-card-text class="pa-3 text-left">
-                <div class="text-caption text-medium-emphasis">
-                  {{ t("common.states") }}
-                </div>
-                <div class="text-body-2 text-truncate">
-                  {{ selectedState.file_name }}
-                </div>
-                <div class="text-caption text-medium-emphasis mt-1">
-                  {{ selectedState.updated_at?.substring(0, 19).replace("T", " ") }}
-                </div>
-              </v-card-text>
-            </v-card>
+          <!-- State selector when not running -->
+          <div v-if="!gameRunning" class="mt-4">
+            <div class="text-caption text-medium-emphasis mb-1">
+              {{ t("play.select-state") }}
+            </div>
+            <v-list
+              v-if="jsDosStates.length > 0"
+              density="compact"
+              rounded="lg"
+              variant="outlined"
+              class="pa-0"
+              max-height="180"
+            >
+              <v-list-item
+                :active="!selectedState"
+                @click="selectedState = null"
+              >
+                <v-list-item-title class="text-body-2">
+                  {{ t("play.deselect-state") }}
+                </v-list-item-title>
+              </v-list-item>
+              <v-list-item
+                v-for="state in jsDosStates"
+                :key="state.id"
+                :active="selectedState?.id === state.id"
+                @click="selectedState = state"
+              >
+                <v-list-item-title class="text-body-2 text-truncate">
+                  {{ state.file_name }}
+                </v-list-item-title>
+                <v-list-item-subtitle class="text-caption">
+                  {{
+                    state.updated_at
+                      ?.substring(0, 19)
+                      .replace("T", " ")
+                  }}
+                </v-list-item-subtitle>
+              </v-list-item>
+            </v-list>
+            <div v-else class="text-body-2 text-medium-emphasis">
+              {{ t("play.no-states-available") }}
+            </div>
           </div>
 
           <v-row v-if="!gameRunning" class="align-center ga-4 mt-4" no-gutters>
@@ -318,15 +358,26 @@ onMounted(async () => {
             </v-btn>
           </v-row>
 
-          <!-- Save & Quit and Quit buttons when running -->
+          <!-- Save, Save & Quit and Quit buttons when running -->
           <div v-if="gameRunning" class="mt-4">
             <v-btn
+              block
+              color="primary"
+              variant="outlined"
+              size="large"
+              prepend-icon="mdi-content-save"
+              :loading="saving"
+              @click="saveState"
+            >
+              {{ t("play.save-state") }}
+            </v-btn>
+            <v-btn
+              class="mt-2"
               block
               color="primary"
               variant="flat"
               size="large"
               prepend-icon="mdi-content-save"
-              :loading="saving"
               @click="saveAndQuit"
             >
               {{ t("play.save-and-quit") }}
