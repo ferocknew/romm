@@ -9,7 +9,7 @@ import { ROUTES } from "@/plugins/router";
 import romApi from "@/services/api/rom";
 import { stateApi } from "@/services/api/state";
 import storeRoms, { type DetailedRom } from "@/stores/roms";
-import type { DosProps, JsDosCI } from "@/types/jsdos";
+import type { DosProps, FsNode, JsDosCI } from "@/types/jsdos";
 import { getDownloadPath } from "@/utils";
 import { saveJsDosState } from "./utils";
 
@@ -25,6 +25,7 @@ const dosProps = ref<DosProps | null>(null);
 const selectedState = ref<StateSchema | null>(null);
 const saving = ref(false);
 const jsDosStates = ref<StateSchema[]>([]);
+const isRestarting = ref(false);
 
 async function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -132,14 +133,11 @@ function onPlay() {
       console.log("[js-dos] No state selected, starting fresh");
     }
 
-    // Use fsChanges.pull to provide server-side persist data as bundleChanges.
-    // js-dos restores state via changesProducer → changesFromUrl → fsChanges.pull,
-    // which loads it as bundles[1] (the changes layer).
     const fsChanges = persistData
       ? {
           pull: async (_key: string) => {
             console.log(
-              "[js-dos] fsChanges.pull called, returning data size:",
+              "[js-dos] fsChanges.pull returning state data, size:",
               persistData!.length,
             );
             return persistData;
@@ -156,9 +154,13 @@ function onPlay() {
       autoStart: true,
     });
 
+    // Clear any previous content in the container
+    container.innerHTML = "";
+
     const props = window.Dos(container as HTMLDivElement, {
       url: romUrl,
       autoStart: true,
+      noSidebar: true,
       ...(dosboxConf ? { dosboxConf } : {}),
       ...(fsChanges ? { fsChanges } : {}),
       onEvent: (event: string, ci: JsDosCI) => {
@@ -168,8 +170,37 @@ function onPlay() {
           // Listen for internal exit to sync our state
           ci.events().onExit(() => {
             console.log("[js-dos] CI internal exit fired");
-            resetGameState();
+            if (!isRestarting.value) {
+              resetGameState();
+            }
           });
+
+          // If a state is selected, write state file and trigger Quick Load
+          if (selectedState.value && persistData) {
+            setTimeout(async () => {
+              if (!dosCI.value) return;
+              try {
+                // Write the state file to DOSBox-X virtual filesystem
+                await dosCI.value.fsWriteFile("SAVESTATE.SAV", persistData);
+                console.log(
+                  "[js-dos] Wrote state file, triggering hand_loadstate",
+                );
+
+                // Trigger DOSBox-X Quick Load to restore emulator state
+                dosCI.value.sendBackendEvent({
+                  type: "wc-trigger-event",
+                  event: "hand_loadstate",
+                });
+              } catch (e) {
+                console.warn("[js-dos] Failed to restore state via fsWriteFile:", e);
+                // Fallback: just trigger loadstate without writing file
+                dosCI.value.sendBackendEvent({
+                  type: "wc-trigger-event",
+                  event: "hand_loadstate",
+                });
+              }
+            }, 2000);
+          }
         }
       },
     });
@@ -185,22 +216,97 @@ function onFullScreenChange() {
   fullScreenOnPlay.value = !fullScreenOnPlay.value;
 }
 
+function collectFilePaths(node: FsNode, prefix: string = ""): string[] {
+  const path = prefix ? `${prefix}/${node.name}` : node.name;
+  if (node.type === "file") return [path];
+  const files: string[] = [];
+  if (node.children) {
+    for (const child of node.children) {
+      files.push(...collectFilePaths(child, path));
+    }
+  }
+  return files;
+}
+
 async function saveState() {
   if (!dosCI.value || !rom.value) return null;
   saving.value = true;
   try {
-    // persist(true) returns changes-only ZIP, compatible with bundleChanges loading
-    const persistData = await dosCI.value.persist(true);
+    const ci = dosCI.value;
+
+    // Step 1: Snapshot current filesystem tree
+    const treeBefore = await ci.fsTree();
+    const filesBefore = new Set(collectFilePaths(treeBefore));
+    console.log("[js-dos] Files before savestate:", filesBefore.size);
+
+    // Step 2: Trigger DOSBox-X Quick Save (writes state file to virtual FS)
+    ci.sendBackendEvent({
+      type: "wc-trigger-event",
+      event: "hand_savestate",
+    });
+    console.log("[js-dos] Triggered hand_savestate, waiting...");
+
+    // Wait for DOSBox-X to process the save
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Step 3: Snapshot filesystem again and find new/modified files
+    const treeAfter = await ci.fsTree();
+    const filesAfter = collectFilePaths(treeAfter);
+    const newFiles = filesAfter.filter((f) => !filesBefore.has(f));
     console.log(
-      "[js-dos] persist(true) returned, size:",
-      persistData?.length,
-      "starts with PK:",
-      persistData?.[0] === 0x50 && persistData?.[1] === 0x4b,
+      "[js-dos] Files after savestate:",
+      filesAfter.length,
+      "new:",
+      newFiles,
     );
-    if (persistData && persistData.length > 0) {
+
+    // Step 4: Read state files and combine into a ZIP-like payload
+    const stateFiles: { path: string; data: Uint8Array }[] = [];
+    for (const filePath of newFiles) {
+      try {
+        const data = await ci.fsReadFile(filePath);
+        console.log(
+          "[js-dos] Read state file:",
+          filePath,
+          "size:",
+          data.length,
+        );
+        stateFiles.push({ path: filePath, data });
+      } catch (e) {
+        console.warn("[js-dos] Failed to read state file:", filePath, e);
+      }
+    }
+
+    // Also capture any persist data as fallback
+    let persistData: Uint8Array | null = null;
+    try {
+      persistData = await ci.persist(true);
+      console.log("[js-dos] persist(true) size:", persistData?.length);
+    } catch (e) {
+      console.warn("[js-dos] persist(true) failed:", e);
+    }
+
+    // Combine: prefer state files, fall back to persist data
+    let uploadData: Uint8Array | null = null;
+    if (stateFiles.length > 0) {
+      // For now, upload the first (largest) state file directly
+      stateFiles.sort((a, b) => b.data.length - a.data.length);
+      uploadData = stateFiles[0].data;
+      console.log(
+        "[js-dos] Using state file:",
+        stateFiles[0].path,
+        "size:",
+        uploadData.length,
+      );
+    } else if (persistData && persistData.length > 0) {
+      uploadData = persistData;
+      console.log("[js-dos] Falling back to persist data, size:", uploadData.length);
+    }
+
+    if (uploadData && uploadData.length > 0) {
       const saved = await saveJsDosState({
         rom: rom.value,
-        stateFile: persistData,
+        stateFile: uploadData,
       });
       if (saved) {
         jsDosStates.value.unshift(saved);
@@ -210,6 +316,7 @@ async function saveState() {
       }
       return saved;
     }
+    console.warn("[js-dos] No state data to save");
   } catch (e) {
     console.error("[js-dos] Failed to save state:", e);
   } finally {
@@ -224,18 +331,40 @@ async function saveAndQuit() {
 }
 
 async function onlyQuit() {
+  const container = document.getElementById("dos");
+  if (container) {
+    container.innerHTML = "";
+  }
   if (dosCI.value) {
-    await dosCI.value.exit();
+    try {
+      await dosCI.value.exit();
+    } catch {
+      // ExitStatus is expected when WASM terminates
+    }
   }
   resetGameState();
   window.history.back();
 }
 
 async function loadAndRestart(state: StateSchema | null) {
-  if (dosCI.value) {
-    await dosCI.value.exit();
+  // Set flag to prevent onExit from resetting gameRunning during restart
+  isRestarting.value = true;
+
+  // Clear container first to prevent sidebar dialogs and form errors
+  const container = document.getElementById("dos");
+  if (container) {
+    container.innerHTML = "";
   }
-  resetGameState();
+
+  if (dosCI.value) {
+    try {
+      await dosCI.value.exit();
+    } catch {
+      // ExitStatus is expected when WASM terminates
+    }
+  }
+  dosCI.value = null;
+  dosProps.value = null;
   selectedState.value = state;
   console.log(
     "[js-dos] Restarting with state:",
@@ -243,6 +372,7 @@ async function loadAndRestart(state: StateSchema | null) {
   );
   await nextTick();
   onPlay();
+  isRestarting.value = false;
 }
 
 onMounted(async () => {
@@ -273,7 +403,11 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (dosCI.value) {
-    dosCI.value.exit();
+    try {
+      dosCI.value.exit();
+    } catch {
+      // Ignore exit errors during cleanup
+    }
   }
 });
 </script>

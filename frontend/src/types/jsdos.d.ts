@@ -1,9 +1,36 @@
+export interface FsNode {
+  name: string;
+  type: "file" | "dir";
+  children?: FsNode[];
+}
+
 export interface JsDosCI {
   config: () => Promise<any>;
-  persist: (changesOnly?: boolean) => Promise<Uint8Array>;
+  height: () => number;
+  width: () => number;
+  screenshot: () => Promise<ImageData>;
+  pause: () => void;
+  resume: () => void;
+  mute: () => void;
+  unmute: () => void;
   exit: () => Promise<void>;
+  sendBackendEvent: (event: any) => void;
+  persist: (changesOnly?: boolean) => Promise<Uint8Array | null>;
+  fsTree: () => Promise<FsNode>;
+  fsReadFile: (file: string) => Promise<Uint8Array>;
+  fsWriteFile: (
+    file: string,
+    contents: ReadableStream<Uint8Array> | Uint8Array,
+  ) => Promise<void>;
   events: () => {
+    onStdout: (consumer: (message: string) => void) => void;
+    onFrameSize: (consumer: (width: number, height: number) => void) => void;
+    onFrame: (
+      consumer: (rgb: Uint8Array | null, rgba: Uint8Array | null) => void,
+    ) => void;
+    onSoundPush: (consumer: (samples: Float32Array) => void) => void;
     onExit: (fn: () => void) => void;
+    onMessage: (consumer: (msgType: string, ...args: any[]) => void) => void;
     onUnload: (fn: () => Promise<void>) => void;
   };
 }
