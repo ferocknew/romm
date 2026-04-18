@@ -1,7 +1,11 @@
 export interface JsDosCI {
   config: () => Promise<any>;
-  persist: () => Promise<Uint8Array>;
+  persist: (changesOnly?: boolean) => Promise<Uint8Array>;
   exit: () => Promise<void>;
+  events: () => {
+    onExit: (fn: () => void) => void;
+    onUnload: (fn: () => Promise<void>) => void;
+  };
 }
 
 export type DosEvent =
