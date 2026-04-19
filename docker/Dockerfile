@@ -110,13 +110,14 @@ RUN wget "https://github.com/EmulatorJS/EmulatorJS/releases/download/v${EMULATOR
     7z x -y "${EMULATORJS_VERSION}.7z" -o/emulatorjs && \
     rm -f "${EMULATORJS_VERSION}.7z"
 
-# Upgrade DOSBox Pure core to 1.0-preview5 (built via .github/workflows/build-dosbox-pure.yml)
-ARG DOSBOX_PURE_CORE_URL=""
-RUN if [ -n "$DOSBOX_PURE_CORE_URL" ]; then \
-      cd /emulatorjs/data/cores && \
-      wget -O dosbox_pure-thread-wasm.data "$DOSBOX_PURE_CORE_URL" && \
-      rm -f dosbox_pure-wasm.data; \
-    fi
+# Upgrade DOSBox Pure core (built via .github/workflows/build-dosbox-pure.yml)
+# Place dosbox_pure-thread-wasm.data in docker/dosbox-pure/ to include upgraded core
+COPY docker/dosbox-pure/dosbox_pure-thread-wasm.data* /tmp/dosbox-pure/
+RUN if [ -f /tmp/dosbox-pure/dosbox_pure-thread-wasm.data ]; then \
+      cp /tmp/dosbox-pure/dosbox_pure-thread-wasm.data /emulatorjs/data/cores/ && \
+      rm -f /emulatorjs/data/cores/dosbox_pure-wasm.data; \
+    fi && \
+    rm -rf /tmp/dosbox-pure
 
 ARG RUFFLE_VERSION=nightly-2025-08-14
 ARG RUFFLE_FILE=ruffle-nightly-2025_08_14-web-selfhosted.zip
