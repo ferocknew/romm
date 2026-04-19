@@ -1,6 +1,7 @@
---- a/Makefile
-+++ b/Makefile
-@@ -70,6 +70,12 @@ else ifeq ($(platform),tvos-arm64)
+--- Makefile.orig	2026-04-19 15:12:05
++++ Makefile	2026-04-19 15:12:17
+@@ -70,6 +70,11 @@
+   LDFLAGS := -Wl,-dead_strip $(MINVERSION)
    COMMONFLAGS += -DDISABLE_DYNAREC=1 -Wno-unknown-warning-option -Wno-deprecated-declarations $(MINVERSION)
    STRIPCMD := $(or $(STRIP),strip) -xS
 +else ifeq ($(platform), emscripten)
