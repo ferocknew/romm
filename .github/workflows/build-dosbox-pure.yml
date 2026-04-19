@@ -1,0 +1,75 @@
+name: Build DOSBox Pure WASM Core
+
+on:
+  push:
+    tags:
+      - "test-*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.3.0
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/test-}" >> $GITHUB_OUTPUT
+
+      - name: Install Emscripten SDK
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
+          cd ~/emsdk
+          ./emsdk install latest
+          ./emsdk activate latest
+
+      - name: Patch Makefile for emscripten
+        working-directory: demo/dosbox-pure
+        run: |
+          # Insert emscripten platform block after the tvos-arm64 section
+          sed -i '/^else ifneq \$(ISMAC),/i \
+          else ifeq ($(platform), emscripten)\
+            OUTNAME := dosbox_pure_libretro_$(platform).bc\
+            STATIC_LINKING = 1\
+            CXX += -std=gnu++11\
+            COMMONFLAGS += -DEMSCRIPTEN -pthread\
+          ' Makefile
+
+      - name: Build DOSBox Pure bitcode
+        working-directory: demo/dosbox-pure
+        run: |
+          source ~/emsdk/emsdk_env.sh
+          emmake make platform=emscripten -j$(nproc)
+
+      - name: Clone EmulatorJS RetroArch
+        run: |
+          git clone https://github.com/EmulatorJS/RetroArch.git --branch next --depth 1 ~/retroarch
+
+      - name: Link WASM core
+        working-directory: ~/retroarch/emulatorjs
+        run: |
+          source ~/emsdk/emsdk_env.sh
+          cp "${{ github.workspace }}/demo/dosbox-pure/dosbox_pure_libretro_emscripten.bc" ./libretro_emscripten.a
+          emmake ./build-emulatorjs.sh --threads
+
+      - name: Extract and rename output files
+        run: |
+          mkdir -p output
+          cd ~/retroarch/EmulatorJS/data/cores
+          ls -la dosbox_pure*
+          # The .data file is a 7z archive containing .wasm and .js
+          cp dosbox_pure*.data "${{ github.workspace }}/output/" || true
+          # Also extract the individual files for direct use
+          cd "${{ github.workspace }}/output"
+          7z x ~/retroarch/EmulatorJS/data/cores/dosbox_pure*.data || true
+          ls -la
+
+      - name: Upload WASM core artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: dosbox-pure-wasm-${{ steps.version.outputs.VERSION }}
+          path: output/
+          retention-days: 30
