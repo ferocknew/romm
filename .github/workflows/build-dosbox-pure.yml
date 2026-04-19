@@ -16,6 +16,9 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/test-}" >> $GITHUB_OUTPUT
 
+      - name: Checkout code
+        uses: actions/checkout@v4.3.0
+
       - name: Install Emscripten SDK
         run: |
           git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
@@ -30,13 +33,7 @@ jobs:
       - name: Patch Makefile for emscripten
         working-directory: /home/runner/dosbox-pure
         run: |
-          sed -i '/^else ifneq \$(ISMAC),/i \
-          else ifeq ($(platform), emscripten)\
-            OUTNAME := dosbox_pure_libretro_$(platform).bc\
-            STATIC_LINKING = 1\
-            CXX += -std=gnu++11\
-            COMMONFLAGS += -DEMSCRIPTEN -pthread\
-          ' Makefile
+          patch -p1 < "${{ github.workspace }}/.github/dosbox-pure-emscripten.patch"
 
       - name: Build DOSBox Pure bitcode
         working-directory: /home/runner/dosbox-pure
