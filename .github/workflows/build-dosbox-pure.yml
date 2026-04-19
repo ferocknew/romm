@@ -52,14 +52,15 @@ jobs:
           cp /home/runner/dosbox-pure/dosbox_pure_libretro_emscripten.bc ./
           emmake ./build-emulatorjs.sh --threads
 
-      - name: Extract and rename output files
+      - name: Collect output files
         run: |
           mkdir -p output
-          cd ~/retroarch/EmulatorJS/data/cores
+          # build-emulatorjs.sh outputs to ~/EmulatorJS/data/cores/
+          cd ~/EmulatorJS/data/cores
           ls -la dosbox_pure*
-          cp dosbox_pure*.data "${{ github.workspace }}/output/" || true
+          cp dosbox_pure*.data "${{ github.workspace }}/output/"
           cd "${{ github.workspace }}/output"
-          7z x ~/retroarch/EmulatorJS/data/cores/dosbox_pure*.data || true
+          7z x ~/EmulatorJS/data/cores/dosbox_pure*.data
           ls -la
 
       - name: Upload WASM core artifact
