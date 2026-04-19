@@ -33,7 +33,7 @@ jobs:
       - name: Patch Makefile for emscripten
         working-directory: /home/runner/dosbox-pure
         run: |
-          patch -p1 < "${{ github.workspace }}/.github/dosbox-pure-emscripten.patch"
+          patch -p0 < "${{ github.workspace }}/.github/dosbox-pure-emscripten.patch"
 
       - name: Build DOSBox Pure bitcode
         working-directory: /home/runner/dosbox-pure
