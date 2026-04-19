@@ -112,6 +112,14 @@ RUN wget "https://github.com/EmulatorJS/EmulatorJS/releases/download/v${EMULATOR
     7z x -y "${EMULATORJS_VERSION}.7z" -o/emulatorjs && \
     rm -f "${EMULATORJS_VERSION}.7z"
 
+# Upgrade DOSBox Pure core to 1.0-preview5 (built via .github/workflows/build-dosbox-pure.yml)
+ARG DOSBOX_PURE_CORE_URL=""
+RUN if [ -n "$DOSBOX_PURE_CORE_URL" ]; then \
+      cd /emulatorjs/data/cores && \
+      wget -O dosbox_pure-thread-wasm.data "$DOSBOX_PURE_CORE_URL" && \
+      rm -f dosbox_pure-wasm.data; \
+    fi
+
 ARG RUFFLE_VERSION=nightly-2025-08-14
 ARG RUFFLE_FILE=ruffle-nightly-2025_08_14-web-selfhosted.zip
 ARG RUFFLE_SHA256=178870c5e7dd825a8df35920dfc5328d83e53f3c4d5d95f70b1ea9cd13494151
